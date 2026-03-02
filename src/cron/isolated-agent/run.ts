@@ -64,7 +64,7 @@ import {
   pickSummaryFromPayloads,
   resolveHeartbeatAckMaxChars,
 } from "./helpers.js";
-import { resolveCronAgentSessionKey } from "./session-key.js";
+import { isChannelSessionKey, resolveCronAgentSessionKey } from "./session-key.js";
 import { resolveCronSession } from "./session.js";
 import { resolveCronSkillsSnapshot } from "./skills-snapshot.js";
 
@@ -235,13 +235,17 @@ export async function runCronIsolatedAgentTurn(params: {
     }
   }
   const now = Date.now();
+  // When the hook targets a channel session (e.g. discord:channel:ID), reuse the existing
+  // session so the run sees full transcript (Discord messages + prior hook messages).
+  // True isolated cron runs (schedule-based) still get forceNew so they don't carry prior context.
+  const useSharedSession =
+    params.job.sessionTarget === "isolated" && isChannelSessionKey(baseSessionKey);
   const cronSession = resolveCronSession({
     cfg: params.cfg,
     sessionKey: agentSessionKey,
     agentId,
     nowMs: now,
-    // Isolated cron runs must not carry prior turn context across executions.
-    forceNew: params.job.sessionTarget === "isolated",
+    forceNew: params.job.sessionTarget === "isolated" && !useSharedSession,
   });
   const runSessionId = cronSession.sessionEntry.sessionId;
   const runSessionKey = baseSessionKey.startsWith("cron:")
