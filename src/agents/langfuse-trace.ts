@@ -108,9 +108,11 @@ export function sendLlmInputToLangfuse(
     },
     body: JSON.stringify({ batch }),
   }).then(
-    (res) => {
+    async (res) => {
       if (!res.ok) {
-        log.warn(`Langfuse ingestion failed: ${res.status} ${res.statusText}`);
+        const body = await res.text();
+        const detail = body.length > 0 ? `; body: ${body.slice(0, 500)}${body.length > 500 ? "…" : ""}` : "";
+        log.warn(`Langfuse ingestion failed: ${res.status} ${res.statusText}${detail}`);
       }
     },
     (err) => {
