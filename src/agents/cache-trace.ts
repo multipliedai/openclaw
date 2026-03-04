@@ -14,6 +14,7 @@ export type CacheTraceStage =
   | "session:limited"
   | "prompt:before"
   | "prompt:images"
+  | "prompt:final"
   | "stream:context"
   | "session:after";
 

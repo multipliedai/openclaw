@@ -24,12 +24,14 @@ import { resolveTelegramInlineButtonsScope } from "../../../telegram/inline-butt
 import { resolveTelegramReactionLevel } from "../../../telegram/reaction-level.js";
 import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { resolveUserPath } from "../../../utils.js";
+import { parseBooleanValue } from "../../../utils/boolean.js";
 import { normalizeMessageChannel } from "../../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
 import { makeBootstrapWarn, resolveBootstrapContextForRun } from "../../bootstrap-files.js";
+import { sendLlmInputToLangfuse } from "../../langfuse-trace.js";
 import { createCacheTrace } from "../../cache-trace.js";
 import {
   listChannelSupportedActions,
@@ -485,6 +487,10 @@ function summarizeSessionContext(messages: AgentMessage[]): {
 export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
+  const promptDebug =
+    parseBooleanValue(process.env.OPENCLAW_PROMPT_DEBUG) ??
+    params.config?.diagnostics?.promptDebug ??
+    false;
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
   const prevCwd = process.cwd();
   const runAbortController = new AbortController();
@@ -983,6 +989,11 @@ export async function runEmbeddedAttempt(
         });
         activeSession.agent.streamFn = cacheTrace.wrapStreamFn(activeSession.agent.streamFn);
       }
+      if (promptDebug) {
+        log.info(
+          `[prompt-debug] session loaded: systemPromptChars=${systemPromptText?.length ?? 0} historyMessages=${activeSession.messages.length}`,
+        );
+      }
 
       // Copilot/Claude can reject persisted `thinking` blocks (e.g. thinkingSignature:"reasoning_text")
       // on *any* follow-up provider call (including tool continuations). Wrap the stream function
@@ -1313,12 +1324,24 @@ export async function runEmbeddedAttempt(
             systemPromptText = legacySystemPrompt;
             log.debug(`hooks: applied systemPrompt override (${legacySystemPrompt.length} chars)`);
           }
+          if (promptDebug) {
+            log.info(
+              `[prompt-debug] context from hooks: prependContextChars=${hookResult?.prependContext?.length ?? 0} systemPromptOverrideChars=${legacySystemPrompt?.length ?? 0}`,
+            );
+          }
+        }
+
+        if (promptDebug) {
+          log.info(
+            `[prompt-debug] session context before LLM: systemPromptChars=${systemPromptText?.length ?? 0} historyMessages=${activeSession.messages.length} userPromptChars=${effectivePrompt.length}`,
+          );
         }
 
         log.debug(`embedded run prompt start: runId=${params.runId} sessionId=${params.sessionId}`);
         cacheTrace?.recordStage("prompt:before", {
           prompt: effectivePrompt,
           messages: activeSession.messages,
+          system: systemPromptText,
         });
 
         // Repair orphaned trailing user messages so new prompts don't violate role ordering.
@@ -1386,30 +1409,49 @@ export async function runEmbeddedAttempt(
             );
           }
 
+          const llmInputEvent = {
+            runId: params.runId,
+            sessionId: params.sessionId,
+            provider: params.provider,
+            model: params.modelId,
+            systemPrompt: systemPromptText,
+            prompt: effectivePrompt,
+            historyMessages: activeSession.messages,
+            imagesCount: imageResult.images.length,
+          };
+          const llmInputCtx = {
+            agentId: hookAgentId,
+            sessionKey: params.sessionKey,
+            sessionId: params.sessionId,
+            workspaceDir: params.workspaceDir,
+            messageProvider: params.messageProvider ?? undefined,
+          };
           if (hookRunner?.hasHooks("llm_input")) {
-            hookRunner
-              .runLlmInput(
-                {
-                  runId: params.runId,
-                  sessionId: params.sessionId,
-                  provider: params.provider,
-                  model: params.modelId,
-                  systemPrompt: systemPromptText,
-                  prompt: effectivePrompt,
-                  historyMessages: activeSession.messages,
-                  imagesCount: imageResult.images.length,
-                },
-                {
-                  agentId: hookAgentId,
-                  sessionKey: params.sessionKey,
-                  sessionId: params.sessionId,
-                  workspaceDir: params.workspaceDir,
-                  messageProvider: params.messageProvider ?? undefined,
-                },
-              )
-              .catch((err) => {
-                log.warn(`llm_input hook failed: ${String(err)}`);
-              });
+            hookRunner.runLlmInput(llmInputEvent, llmInputCtx).catch((err) => {
+              log.warn(`llm_input hook failed: ${String(err)}`);
+            });
+          }
+          sendLlmInputToLangfuse(llmInputEvent, {
+            agentId: hookAgentId,
+            sessionKey: params.sessionKey ?? undefined,
+          });
+
+          cacheTrace?.recordStage("prompt:final", {
+            prompt: effectivePrompt,
+            messages: activeSession.messages,
+            system: systemPromptText,
+            note: `images=${imageResult.images.length}`,
+          });
+
+          if (promptDebug) {
+            const trunc = (s: string, max: number) =>
+              s.length <= max ? s : `${s.slice(0, max)}...`;
+            log.info(
+              `[prompt-debug] sending to LLM: systemChars=${systemPromptText?.length ?? 0} historyMessages=${activeSession.messages.length} userPromptChars=${effectivePrompt.length} images=${imageResult.images.length}`,
+            );
+            log.info(
+              `[prompt-debug] userPromptPreview: ${trunc(effectivePrompt, 400).replace(/\n/g, " ")}`,
+            );
           }
 
           // Only pass images option if there are actually images to pass

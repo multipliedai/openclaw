@@ -35,6 +35,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "diagnostics.enabled": "Diagnostics Enabled",
   "diagnostics.flags": "Diagnostics Flags",
   "diagnostics.stuckSessionWarnMs": "Stuck Session Warning Threshold (ms)",
+  "diagnostics.promptDebug": "Prompt Debug Logging",
   "diagnostics.otel.enabled": "OpenTelemetry Enabled",
   "diagnostics.otel.endpoint": "OpenTelemetry Endpoint",
   "diagnostics.otel.protocol": "OpenTelemetry Protocol",

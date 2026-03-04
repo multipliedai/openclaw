@@ -168,8 +168,22 @@ Defaults:
 
 ### What to inspect
 
-- Cache trace events are JSONL and include staged snapshots like `session:loaded`, `prompt:before`, `stream:context`, and `session:after`.
+- Cache trace events are JSONL and include staged snapshots: `session:loaded` (system + messages after session create), `prompt:before` (user prompt + history messages + system after hooks), `prompt:images`, `prompt:final` (exact payload sent to the LLM), `stream:context`, and `session:after`.
 - Per-turn cache token impact is visible in normal usage surfaces via `cacheRead` and `cacheWrite` (for example `/usage full` and session usage summaries).
+
+### Prompt debug logging
+
+To see exactly how context and memory are added and what is sent to the LLM in human-readable logs:
+
+- Set `diagnostics.promptDebug: true` in config, or `OPENCLAW_PROMPT_DEBUG=1` in the environment.
+- Log lines prefixed with `[prompt-debug]` will show: session loaded (system + history size), context from hooks (prependContext and systemPrompt override lengths), and a final summary plus a short preview of the user prompt before each LLM call.
+- Use with `logging.level: debug` for full context diagnostics (e.g. `[context-diag]` and hook details).
+
+### Auditing prompts with external tools (LangSmith, Langfuse)
+
+- **Cache trace file**: The JSONL file from cache trace is a full audit trail. Pipe to `jq` or load into your own tooling to inspect prompts and responses by stage.
+- **OpenTelemetry**: OpenClaw supports `diagnostics.otel`. You can export traces to backends that accept OTLP (for example LangSmith or Langfuse). If your backend supports OpenTelemetry GenAI or similar conventions, you may see spans for gateway and agent activity; LLM-level spans may require custom instrumentation.
+- **`llm_input` hook**: The plugin hook `llm_input` is invoked before each prompt is sent with `systemPrompt`, `prompt`, and `historyMessages`. A plugin can forward this payload to an external observability service (e.g. LangSmith, Langfuse, or a custom logger) to record every prompt and optionally correlate with responses from the stream.
 
 ## Quick troubleshooting
 

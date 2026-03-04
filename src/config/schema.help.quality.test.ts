@@ -317,6 +317,7 @@ const TARGET_KEYS = [
   "wizard.lastRunMode",
   "diagnostics",
   "diagnostics.otel",
+  "diagnostics.promptDebug",
   "diagnostics.cacheTrace",
   "logging",
   "logging.level",
